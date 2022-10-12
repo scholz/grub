@@ -30,6 +30,7 @@ GRUB_MOD_LICENSE ("GPLv3+");
 struct hook_ctx
 {
   unsigned height, width, depth;
+  unsigned char set_variable; 
   struct grub_video_mode_info *current_mode;
 };
 
@@ -37,6 +38,9 @@ static int
 hook (const struct grub_video_mode_info *info, void *hook_arg)
 {
   struct hook_ctx *ctx = hook_arg;
+
+  if (ctx->set_variable) /* if variable should be set don't print all modes */
+    return 0;
 
   if (ctx->height && ctx->width && (info->width != ctx->width || info->height != ctx->height))
     return 0;
@@ -132,31 +136,40 @@ grub_cmd_videoinfo (grub_command_t cmd __attribute__ ((unused)),
   grub_video_adapter_t adapter;
   grub_video_driver_id_t id;
   struct hook_ctx ctx;
-
-  ctx.height = ctx.width = ctx.depth = 0;
+  
+  ctx.height = ctx.width = ctx.depth = ctx.set_variable = 0;
+  
   if (argc)
     {
+      if (argc == 2 && grub_memcmp(args[0], "--set", sizeof ("--set") - 1) == 0 )
+  ctx.set_variable = 1;
+      else
+        {
       const char *ptr;
       ptr = args[0];
       ctx.width = grub_strtoul (ptr, &ptr, 0);
       if (grub_errno)
-	return grub_errno;
+  return grub_errno;
       if (*ptr != 'x')
-	return grub_error (GRUB_ERR_BAD_ARGUMENT,
-			   N_("invalid video mode specification `%s'"),
-			   args[0]);
+  return grub_error (GRUB_ERR_BAD_ARGUMENT,
+        N_("invalid video mode specification `%s'"),
+        args[0]);
       ptr++;
       ctx.height = grub_strtoul (ptr, &ptr, 0);
       if (grub_errno)
-	return grub_errno;
+  return grub_errno;
       if (*ptr == 'x')
-	{
-	  ptr++;
-	  ctx.depth = grub_strtoul (ptr, &ptr, 0);
-	  if (grub_errno)
-	    return grub_errno;
-	}
+  {
+    ptr++;
+    ctx.depth = grub_strtoul (ptr, &ptr, 0);
+    if (grub_errno)
+      return grub_errno;
+  }
+        }
+
     }
+  
+
 
 #ifdef GRUB_MACHINE_PCBIOS
   if (grub_strcmp (cmd->name, "vbeinfo") == 0)
@@ -164,20 +177,23 @@ grub_cmd_videoinfo (grub_command_t cmd __attribute__ ((unused)),
 #endif
 
   id = grub_video_get_driver_id ();
-
-  grub_puts_ (N_("List of supported video modes:"));
-  grub_puts_ (N_("Legend: mask/position=red/green/blue/reserved"));
-
+  if (!ctx.set_variable)
+    {
+grub_puts_ (N_("List of supported video modes:"));
+grub_puts_ (N_("Legend: mask/position=red/green/blue/reserved"));
+    }
+  
   FOR_VIDEO_ADAPTERS (adapter)
   {
     struct grub_video_mode_info info;
     struct grub_video_edid_info edid_info;
-
-    grub_printf_ (N_("Adapter `%s':\n"), adapter->name);
+    if (!ctx.set_variable)
+  grub_printf_ (N_("Adapter `%s':\n"), adapter->name);
 
     if (!adapter->iterate)
       {
-	grub_puts_ (N_("  No info available"));
+        if (!ctx.set_variable)
+    grub_puts_ (N_("  No info available"));
 	continue;
       }
 
@@ -186,7 +202,18 @@ grub_cmd_videoinfo (grub_command_t cmd __attribute__ ((unused)),
     if (adapter->id == id)
       {
 	if (grub_video_get_info (&info) == GRUB_ERR_NONE)
-	  ctx.current_mode = &info;
+    {
+      ctx.current_mode = &info;
+      if (ctx.set_variable)
+        {
+    /* set grub env var to current mode */
+    char screen_wxh[20];
+    unsigned int width = info.width;
+    unsigned int height = info.height;
+    grub_snprintf (screen_wxh, 20, "%ux%u", width, height);
+    grub_env_set (args[1], screen_wxh);
+        }
+    }
 	else
 	  /* Don't worry about errors.  */
 	  grub_errno = GRUB_ERR_NONE;
@@ -236,19 +263,26 @@ GRUB_MOD_INIT(videoinfo)
 			       /* TRANSLATORS: "x" has to be entered in,
 				  like an identifier, so please don't
 				  use better Unicode codepoints.  */
-			       N_("[WxH[xD]]"),
-			       N_("List available video modes. If "
-				     "resolution is given show only modes"
-				     " matching it."));
+			       N_("[--set var | [WxH]xD]"),
+			       N_("Retrieve available video modes. "
+             "--set is given, assign the currently"
+             "active resolution to var. If --set "
+             "is not provided the available video "
+             "modes are listed. If resolution is "
+             "given, show only matching modes."));
+
 #ifdef GRUB_MACHINE_PCBIOS
   cmd_vbe = grub_register_command ("vbeinfo", grub_cmd_videoinfo,
 				   /* TRANSLATORS: "x" has to be entered in,
 				      like an identifier, so please don't
 				      use better Unicode codepoints.  */
-				   N_("[WxH[xD]]"),
-				   N_("List available video modes. If "
-				      "resolution is given show only modes"
-				      " matching it."));
+				   N_("[--set var | [WxH]xD]"),
+           N_("Retrieve available video modes. "
+           "--set is given, assign the currently"
+           "active resolution to var. If --set "
+           "is not provided the available video "
+           "modes are listed. If resolution is "
+           "given, show only matching modes."));
 #endif
 }
 
